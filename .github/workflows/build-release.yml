@@ -1,0 +1,67 @@
+name: Build and Upload Release Assets
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: darwin
+            arch: arm64
+            artifact: '*.zip'
+          - os: windows-latest
+            platform: win32
+            arch: x64
+            artifact: '*.exe'
+          - os: ubuntu-latest
+            platform: linux
+            arch: x64
+            artifact: '*.deb'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: |
+          # Remove 'v' prefix from tag (v0.1.0 -> 0.1.0)
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build application for ${{ matrix.platform }}
+        run: npm run make -- --arch=${{ matrix.arch }}
+        env:
+          npm_package_version: ${{ steps.version.outputs.version }}
+
+      - name: Find and upload artifacts
+        shell: bash
+        run: |
+          # Find artifacts in the output directory
+          for artifact in out/make/**/${{ matrix.artifact }}; do
+            if [ -f "$artifact" ]; then
+              filename=$(basename "$artifact")
+              echo "Uploading $filename..."
+              gh release upload "${{ github.event.release.tag_name }}" "$artifact" --clobber
+            fi
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
